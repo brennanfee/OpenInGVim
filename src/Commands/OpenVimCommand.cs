@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel.Design;
+using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 using EnvDTE;
@@ -25,23 +26,49 @@ namespace OpenInGVim
             var menuCommandId = new CommandID(PackageGuids.guidOpenInVimCmdSet, PackageIds.OpenInVim);
             var menuItem = new MenuCommand(OpenFolderInVim, menuCommandId);
             commandService.AddCommand(menuItem);
+
+            var ctxMenuCommandId = new CommandID(PackageGuids.guidCtxMenuOpenInVimCmdSet, PackageIds.ContextMenuOpenInVim);
+            var ctxMenuCommand = new MenuCommand(OpenFileInVim, ctxMenuCommandId);
+            commandService.AddCommand(ctxMenuCommand);
         }
 
         public static OpenVimCommand Instance { get; private set; }
 
         private IServiceProvider ServiceProvider => _package;
+        private DTE2 DTE => (DTE2)ServiceProvider.GetService(typeof(DTE));
 
         public static void Initialize(Package package, Options options)
         {
             Instance = new OpenVimCommand(package, options);
         }
 
+        private void OpenFileInVim(object sender, EventArgs e)
+        {
+            try
+            {
+                var activeDocument = DTE.ActiveDocument;
+                var path = Path.Combine(activeDocument.Path, activeDocument.FullName);
+
+                if (!string.IsNullOrEmpty(path))
+                {
+                    OpenVim(path, true);
+                }
+                else
+                {
+                    MessageBox.Show("Couldn't resolve the file");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log(ex);
+            }
+        }
+
         private void OpenFolderInVim(object sender, EventArgs e)
         {
             try
             {
-                var dte = (DTE2)ServiceProvider.GetService(typeof(DTE));
-                var path = ProjectHelpers.GetSelectedPath(dte, _options.OpenSolutionProjectAsRegularFile);
+                var path = ProjectHelpers.GetSelectedPath(DTE, _options.OpenSolutionProjectAsRegularFile);
 
                 if (!string.IsNullOrEmpty(path))
                 {
@@ -58,26 +85,49 @@ namespace OpenInGVim
             }
         }
 
-        private void OpenVim(string path)
+        private void OpenVim(string path, bool contextMenuOptionClicked = false)
         {
             EnsurePathExist();
-            var isDirectory = Directory.Exists(path);
-            var cwd = File.Exists(path) ? Path.GetDirectoryName(path) : path;
 
-            var start = new System.Diagnostics.ProcessStartInfo()
+            bool isDirectory = !contextMenuOptionClicked && Directory.Exists(path);
+            var cwd = File.Exists(path) ? Path.GetDirectoryName(path) : path;
+            var start = new System.Diagnostics.ProcessStartInfo
             {
                 WorkingDirectory = cwd ?? "",
                 FileName = $"\"{_options.PathToExe}\"",
-                Arguments = isDirectory ? "." : $"\"{path}\"",
+                Arguments = GetArguments(path, isDirectory),
                 CreateNoWindow = true,
                 UseShellExecute = false,
-                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+                WindowStyle = ProcessWindowStyle.Maximized,
             };
 
             using (System.Diagnostics.Process.Start(start))
             {
                 string evt = isDirectory ? "directory" : "file";
             }
+        }
+
+        private string GetArguments(string path, bool isDirectory)
+        {
+            if (isDirectory)
+                return ".";
+
+            var cursorAtLine = GetCurrentLine();
+            if (cursorAtLine < 1)
+            {
+                return $"\"{path}\"";
+            }
+
+            return $"+{cursorAtLine} \"{path}\"";
+        }
+
+        private int GetCurrentLine()
+        {
+            var ts = DTE.ActiveWindow.Selection as EnvDTE.TextSelection;
+            if (ts == null)
+                return 1;
+
+            return ts.CurrentLine;
         }
 
         private void EnsurePathExist()

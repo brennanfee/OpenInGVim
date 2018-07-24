@@ -30,7 +30,7 @@ namespace OpenInGVim
 
         public static string GetFilePath(this ProjectItem item)
         {
-            return $"\"{item.FileNames[1]}\""; // Indexing starts from 1
+            return item.FileNames[1]; // Indexing starts from 1
         }
 
         public static string GetRootFolder(this Project project)
